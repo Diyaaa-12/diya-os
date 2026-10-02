@@ -1,0 +1,6 @@
+# Build artifacts
+build/
+*.iso
+
+# Vendored external dependencies (not ours — see SETUP steps to reproduce)
+third_party/

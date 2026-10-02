@@ -1,0 +1,51 @@
+CC := x86_64-elf-gcc
+
+CFLAGS := -ffreestanding -fno-stack-protector -fno-stack-check \
+          -fno-pic -fno-pie -mno-red-zone -mcmodel=kernel \
+          -mno-80387 -mno-mmx -mno-sse -mno-sse2 \
+          -Wall -Wextra -std=gnu11 -O2 -g
+
+LDFLAGS := -nostdlib -static -z max-page-size=0x1000 -Wl,-T,boot/linker.ld
+
+LIMINE_DIR := third_party/limine
+
+KERNEL   := build/kernel.elf
+ISO      := diyaos.iso
+ISO_ROOT := build/iso_root
+
+.PHONY: all iso run clean
+
+all: $(ISO)
+
+build/kmain.o: kernel/kmain.c
+	@mkdir -p build
+	$(CC) $(CFLAGS) -c $< -o $@
+
+build/serial.o: kernel/drivers/serial.c
+	@mkdir -p build
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(KERNEL): build/kmain.o build/serial.o boot/linker.ld
+	$(CC) $(LDFLAGS) build/kmain.o build/serial.o -o $(KERNEL)
+
+iso: $(KERNEL)
+	@rm -rf $(ISO_ROOT)
+	@mkdir -p $(ISO_ROOT)/boot/limine
+	@mkdir -p $(ISO_ROOT)/EFI/BOOT
+	cp $(KERNEL) $(ISO_ROOT)/boot/kernel.elf
+	cp boot/limine.conf $(ISO_ROOT)/boot/limine/limine.conf
+	cp $(LIMINE_DIR)/limine-bios.sys $(LIMINE_DIR)/limine-bios-cd.bin $(LIMINE_DIR)/limine-uefi-cd.bin $(ISO_ROOT)/boot/limine/
+	cp $(LIMINE_DIR)/BOOTX64.EFI $(ISO_ROOT)/EFI/BOOT/
+	xorriso -as mkisofs -R -r -J \
+		-b boot/limine/limine-bios-cd.bin \
+		-no-emul-boot -boot-load-size 4 -boot-info-table \
+		--efi-boot boot/limine/limine-uefi-cd.bin \
+		-efi-boot-part --efi-boot-image --protective-msdos-label \
+		$(ISO_ROOT) -o $(ISO)
+	$(LIMINE_DIR)/limine bios-install $(ISO)
+
+run: iso
+	qemu-system-x86_64 -cdrom $(ISO) -serial stdio -no-reboot -no-shutdown
+
+clean:
+	rm -rf build $(ISO)
