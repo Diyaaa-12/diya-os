@@ -16,7 +16,7 @@ KERNEL   := build/kernel.elf
 ISO      := diyaos.iso
 ISO_ROOT := build/iso_root
 
-OBJS := build/kmain.o build/serial.o build/gdt.o build/gdt_flush.o
+OBJS := build/kmain.o build/serial.o build/gdt.o build/gdt_flush.o build/idt.o build/idt_flush.o build/isr.o build/isr_stubs.o
 
 .PHONY: all iso run clean
 
@@ -40,7 +40,22 @@ build/gdt_flush.o: kernel/arch/x86_64/gdt_flush.asm
 
 $(KERNEL): $(OBJS) boot/linker.ld
 	$(CC) $(LDFLAGS) $(OBJS) -o $(KERNEL)
+build/idt.o: kernel/arch/x86_64/idt.c
+	@mkdir -p build
+	$(CC) $(CFLAGS) -c $< -o $@
 
+build/idt_flush.o: kernel/arch/x86_64/idt_flush.asm
+	@mkdir -p build
+	$(AS) $(ASFLAGS) $< -o $@
+
+build/isr.o: kernel/arch/x86_64/isr.c
+	@mkdir -p build
+	$(CC) $(CFLAGS) -c $< -o $@
+
+build/isr_stubs.o: kernel/arch/x86_64/isr_stubs.asm
+	@mkdir -p build
+	$(AS) $(ASFLAGS) $< -o $@
+	
 iso: $(KERNEL)
 	@rm -rf $(ISO_ROOT)
 	@mkdir -p $(ISO_ROOT)/boot/limine

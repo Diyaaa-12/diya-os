@@ -50,3 +50,16 @@ void serial_write(const char *str)
         str++;
     }
 }
+void serial_write_hex(uint64_t value)
+{
+    const char *digits = "0123456789abcdef";
+    char buf[17];
+    buf[16] = '\0';
+
+    for (int i = 15; i >= 0; i--) {
+        buf[i] = digits[value & 0xF];
+        value >>= 4;
+    }
+
+    serial_write(buf);
+}
