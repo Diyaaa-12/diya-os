@@ -7,6 +7,8 @@ extern void context_switch(uint64_t *old_rsp_ptr, uint64_t new_rsp);
 
 static struct task *current_task;
 
+extern void task_trampoline(void);
+
 struct task *task_create(task_entry_fn entry)
 {
     struct task *t = (struct task *)kmalloc(sizeof(struct task));
@@ -14,18 +16,13 @@ struct task *task_create(task_entry_fn entry)
     uint8_t *stack_mem = (uint8_t *)kmalloc(TASK_STACK_SIZE);
     uint64_t *stack_top = (uint64_t *)(stack_mem + TASK_STACK_SIZE);
 
-    /* Craft a fake saved context so that switching TO this never-yet-run
-     * task is handled by the exact same restore code path as resuming a
-     * task that yielded normally. The values must land in memory in the
-     * precise order context_switch's pop sequence expects: r15 closest
-     * to the new rsp, entry address last (consumed by `ret`). */
-    *(--stack_top) = (uint64_t)entry; /* "return address" for the final ret */
-    *(--stack_top) = 0; /* rbp */
-    *(--stack_top) = 0; /* rbx */
-    *(--stack_top) = 0; /* r12 */
-    *(--stack_top) = 0; /* r13 */
-    *(--stack_top) = 0; /* r14 */
-    *(--stack_top) = 0; /* r15 */
+    *(--stack_top) = (uint64_t)task_trampoline; /* "return address" for the ret */
+    *(--stack_top) = 0;               /* rbp */
+    *(--stack_top) = (uint64_t)entry; /* rbx -- trampoline reads entry from here */
+    *(--stack_top) = 0;               /* r12 */
+    *(--stack_top) = 0;               /* r13 */
+    *(--stack_top) = 0;               /* r14 */
+    *(--stack_top) = 0;               /* r15 */
 
     t->rsp = (uint64_t)stack_top;
     return t;

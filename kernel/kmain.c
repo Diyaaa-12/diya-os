@@ -9,6 +9,7 @@
 #include "mm/vmm.h"
 #include "mm/heap.h"
 #include "sched/task.h"
+#include "sched/scheduler.h"
 
 __attribute__((used, section(".limine_requests")))
 static volatile uint64_t limine_base_revision[] = LIMINE_BASE_REVISION(3);
@@ -42,60 +43,41 @@ extern uint64_t __kernel_end;
 static struct task main_task;
 static struct task *task_a;
 static struct task *task_b;
-static volatile int switch_count = 0;
-static volatile uint64_t start_tick;
+static volatile uint64_t a_iterations = 0;
+static volatile uint64_t b_iterations = 0;
 
 static void task_a_entry(void)
 {
     for (;;) {
-        if (switch_count % 500 == 0) {
-            serial_write("TaskA: running, tick=0x");
+        a_iterations++;
+        if (a_iterations % 300000 == 0) {
+            serial_write("TaskA: iter=0x");
+            serial_write_hex(a_iterations);
+            serial_write(" tick=0x");
             serial_write_hex(timer_get_ticks());
+            serial_write(" preemptions_so_far=0x");
+            serial_write_hex(scheduler_get_switch_count());
             serial_write("\n");
         }
-
-        switch_count++;
-                if (switch_count >= 2000) {
-            uint64_t end_tick = timer_get_ticks();
-            serial_write("TaskA: done, halting. start_tick=0x");
-            serial_write_hex(start_tick);
-            serial_write(" end_tick=0x");
-            serial_write_hex(end_tick);
-            serial_write(" elapsed=0x");
-            serial_write_hex(end_tick - start_tick);
-            serial_write("\n");
-            for (;;) { __asm__ ("hlt"); }
-        }
-
-        task_switch_to(task_b);
     }
 }
 
 static void task_b_entry(void)
 {
     for (;;) {
-        if (switch_count % 500 == 0) {
-            serial_write("TaskB: running, tick=0x");
+        b_iterations++;
+        if (b_iterations % 300000 == 0) {
+            serial_write("TaskB: iter=0x");
+            serial_write_hex(b_iterations);
+            serial_write(" tick=0x");
             serial_write_hex(timer_get_ticks());
+            serial_write(" preemptions_so_far=0x");
+            serial_write_hex(scheduler_get_switch_count());
             serial_write("\n");
         }
-
-        switch_count++;
-                if (switch_count >= 2000) {
-            uint64_t end_tick = timer_get_ticks();
-            serial_write("TaskA: done, halting. start_tick=0x");
-            serial_write_hex(start_tick);
-            serial_write(" end_tick=0x");
-            serial_write_hex(end_tick);
-            serial_write(" elapsed=0x");
-            serial_write_hex(end_tick - start_tick);
-            serial_write("\n");
-            for (;;) { __asm__ ("hlt"); }
-        }
-            start_tick = timer_get_ticks();
-        task_switch_to(task_a);
     }
 }
+
 
 void kmain(void)
 {
@@ -151,11 +133,14 @@ void kmain(void)
     serial_write("DiyaOS: heap initialized\n");
 
     /* --- Context switching test --- */
-    task_set_current(&main_task);
+        task_set_current(&main_task);
     task_a = task_create(task_a_entry);
     task_b = task_create(task_b_entry);
 
-    serial_write("DiyaOS: switching to Task A -- testing context switching\n");
+    scheduler_add_task(task_a);
+    scheduler_add_task(task_b);
+
+    serial_write("DiyaOS: starting preemptive scheduling -- neither task yields voluntarily\n");
     task_switch_to(task_a);
 
     for (;;) {
