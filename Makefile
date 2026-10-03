@@ -16,7 +16,7 @@ KERNEL   := build/kernel.elf
 ISO      := diyaos.iso
 ISO_ROOT := build/iso_root
 
-OBJS := build/kmain.o build/serial.o build/gdt.o build/gdt_flush.o build/idt.o build/idt_flush.o build/isr.o build/isr_stubs.o build/pic.o build/timer.o build/irq.o build/irq_stubs.o build/pmm.o build/vmm.o build/heap.o
+OBJS := build/kmain.o build/serial.o build/gdt.o build/gdt_flush.o build/idt.o build/idt_flush.o build/isr.o build/isr_stubs.o build/pic.o build/timer.o build/irq.o build/irq_stubs.o build/pmm.o build/vmm.o build/heap.o build/task.o build/context_switch.o
 
 .PHONY: all iso run clean
 
@@ -84,6 +84,14 @@ $(KERNEL): $(OBJS) boot/linker.ld
 build/heap.o: kernel/mm/heap.c
 	@mkdir -p build
 	$(CC) $(CFLAGS) -c $< -o $@
+
+build/task.o: kernel/sched/task.c
+	@mkdir -p build
+	$(CC) $(CFLAGS) -c $< -o $@
+
+build/context_switch.o: kernel/arch/x86_64/context_switch.asm
+	@mkdir -p build
+	$(AS) $(ASFLAGS) $< -o $@
 
 
 iso: $(KERNEL)

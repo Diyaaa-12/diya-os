@@ -8,6 +8,7 @@
 #include "mm/pmm.h"
 #include "mm/vmm.h"
 #include "mm/heap.h"
+#include "sched/task.h"
 
 __attribute__((used, section(".limine_requests")))
 static volatile uint64_t limine_base_revision[] = LIMINE_BASE_REVISION(3);
@@ -38,6 +39,64 @@ static volatile uint64_t limine_requests_end_marker[] = LIMINE_REQUESTS_END_MARK
 
 extern uint64_t __kernel_end;
 
+static struct task main_task;
+static struct task *task_a;
+static struct task *task_b;
+static volatile int switch_count = 0;
+static volatile uint64_t start_tick;
+
+static void task_a_entry(void)
+{
+    for (;;) {
+        if (switch_count % 500 == 0) {
+            serial_write("TaskA: running, tick=0x");
+            serial_write_hex(timer_get_ticks());
+            serial_write("\n");
+        }
+
+        switch_count++;
+                if (switch_count >= 2000) {
+            uint64_t end_tick = timer_get_ticks();
+            serial_write("TaskA: done, halting. start_tick=0x");
+            serial_write_hex(start_tick);
+            serial_write(" end_tick=0x");
+            serial_write_hex(end_tick);
+            serial_write(" elapsed=0x");
+            serial_write_hex(end_tick - start_tick);
+            serial_write("\n");
+            for (;;) { __asm__ ("hlt"); }
+        }
+
+        task_switch_to(task_b);
+    }
+}
+
+static void task_b_entry(void)
+{
+    for (;;) {
+        if (switch_count % 500 == 0) {
+            serial_write("TaskB: running, tick=0x");
+            serial_write_hex(timer_get_ticks());
+            serial_write("\n");
+        }
+
+        switch_count++;
+                if (switch_count >= 2000) {
+            uint64_t end_tick = timer_get_ticks();
+            serial_write("TaskA: done, halting. start_tick=0x");
+            serial_write_hex(start_tick);
+            serial_write(" end_tick=0x");
+            serial_write_hex(end_tick);
+            serial_write(" elapsed=0x");
+            serial_write_hex(end_tick - start_tick);
+            serial_write("\n");
+            for (;;) { __asm__ ("hlt"); }
+        }
+            start_tick = timer_get_ticks();
+        task_switch_to(task_a);
+    }
+}
+
 void kmain(void)
 {
     serial_init();
@@ -59,95 +118,47 @@ void kmain(void)
     uint64_t hhdm_offset = hhdm_request.response->offset;
 
     pmm_init(memmap, hhdm_offset);
-
-    /* --- Paging setup --- */
     vmm_init(hhdm_offset);
 
     uint64_t kvirt_base = exec_addr_request.response->virtual_base;
     uint64_t kphys_base = exec_addr_request.response->physical_base;
     uint64_t kernel_end  = (uint64_t)&__kernel_end;
 
-    serial_write("DiyaOS: mapping kernel range virt=0x");
-    serial_write_hex(kvirt_base);
-    serial_write(" - 0x");
-    serial_write_hex(kernel_end);
-    serial_write("\n");
-
     for (uint64_t v = kvirt_base; v < kernel_end; v += 0x1000) {
         vmm_map_page(v, kphys_base + (v - kvirt_base), PAGE_WRITABLE);
     }
 
     #define PHYS_MAP_CAP 0x100000000ULL
-
     uint64_t highest_mapped_phys = 0;
     for (uint64_t i = 0; i < memmap->entry_count; i++) {
         struct limine_memmap_entry *entry = memmap->entries[i];
         if (entry->type == LIMINE_MEMMAP_BAD_MEMORY) continue;
         if (entry->base >= PHYS_MAP_CAP) continue;
-
         uint64_t end = entry->base + entry->length;
         if (end > PHYS_MAP_CAP) end = PHYS_MAP_CAP;
         if (end > highest_mapped_phys) highest_mapped_phys = end;
     }
-
-    uint64_t hhdm_range_end = hhdm_offset + highest_mapped_phys;
-
-    serial_write("DiyaOS: mapping HHDM range virt=0x");
-    serial_write_hex(hhdm_offset);
-    serial_write(" - 0x");
-    serial_write_hex(hhdm_range_end);
-    serial_write(" (covers all real RAM below 4GiB)\n");
-
     for (uint64_t phys = 0; phys < highest_mapped_phys; phys += 0x1000) {
         vmm_map_page(hhdm_offset + phys, phys, PAGE_WRITABLE);
     }
 
     serial_write("DiyaOS: kernel + HHDM ranges mapped in new page tables\n");
 
-    uint64_t current_rsp;
-    __asm__ volatile ("mov %%rsp, %0" : "=r"(current_rsp));
-
-    serial_write("DiyaOS: current RSP=0x");
-    serial_write_hex(current_rsp);
-    serial_write("\n");
-
-    serial_write("DiyaOS: RSP is covered -- switching CR3 now\n");
     vmm_switch_to_kernel_pml4();
     serial_write("DiyaOS: CR3 switched successfully, still alive\n");
 
-    /* --- Heap + demand paging --- */
     heap_init();
     serial_write("DiyaOS: heap initialized\n");
 
-    volatile uint64_t *a = (volatile uint64_t *)kmalloc(8);
-    volatile uint64_t *b = (volatile uint64_t *)kmalloc(8);
+    /* --- Context switching test --- */
+    task_set_current(&main_task);
+    task_a = task_create(task_a_entry);
+    task_b = task_create(task_b_entry);
 
-    *a = 0x1111111111111111ULL;
-    *b = 0x2222222222222222ULL;
+    serial_write("DiyaOS: switching to Task A -- testing context switching\n");
+    task_switch_to(task_a);
 
-    serial_write("DiyaOS: wrote to heap, a=0x");
-    serial_write_hex(*a);
-    serial_write(" b=0x");
-    serial_write_hex(*b);
-    serial_write("\n");
-
-    volatile uint64_t *far = (volatile uint64_t *)(KHEAP_START + 0x5000);
-    *far = 0x3333333333333333ULL;
-    serial_write("DiyaOS: wrote to far page, far=0x");
-    serial_write_hex(*far);
-    serial_write(" (this access was on a different page -- a separate page fault)\n");
-
-    serial_write("DiyaOS: demand paging verified -- no crash, values correct\n");
-
-    uint64_t last_printed = 0;
     for (;;) {
-        uint64_t t = timer_get_ticks();
-        if (t - last_printed >= 100) {
-            serial_write("tick=0x");
-            serial_write_hex(t);
-            serial_write("\n");
-            last_printed = t;
-        }
         __asm__ ("hlt");
     }
 }
