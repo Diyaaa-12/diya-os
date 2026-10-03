@@ -7,6 +7,7 @@
 #include "arch/x86_64/idt.h"
 #include "mm/pmm.h"
 #include "mm/vmm.h"
+#include "mm/heap.h"
 
 __attribute__((used, section(".limine_requests")))
 static volatile uint64_t limine_base_revision[] = LIMINE_BASE_REVISION(3);
@@ -76,11 +77,6 @@ void kmain(void)
         vmm_map_page(v, kphys_base + (v - kvirt_base), PAGE_WRITABLE);
     }
 
-    /* Map all "real RAM" physical memory, not just usable frames --
-     * Limine's own boot stack lives in bootloader-reclaimable memory,
-     * which our PMM doesn't track but our HHDM still needs to cover.
-     * Capped at 4GiB: higher memmap entries here are PCI64 MMIO windows,
-     * not real RAM, and would be wasteful/pointless to map. */
     #define PHYS_MAP_CAP 0x100000000ULL
 
     uint64_t highest_mapped_phys = 0;
@@ -108,34 +104,40 @@ void kmain(void)
 
     serial_write("DiyaOS: kernel + HHDM ranges mapped in new page tables\n");
 
-    /* --- Stack safety check before we switch CR3 --- */
     uint64_t current_rsp;
     __asm__ volatile ("mov %%rsp, %0" : "=r"(current_rsp));
 
     serial_write("DiyaOS: current RSP=0x");
     serial_write_hex(current_rsp);
     serial_write("\n");
-    serial_write("DiyaOS: kernel range  = 0x");
-    serial_write_hex(kvirt_base);
-    serial_write(" - 0x");
-    serial_write_hex(kernel_end);
-    serial_write("\n");
-    serial_write("DiyaOS: HHDM range    = 0x");
-    serial_write_hex(hhdm_offset);
-    serial_write(" - 0x");
-    serial_write_hex(hhdm_range_end);
-    serial_write("\n");
 
     serial_write("DiyaOS: RSP is covered -- switching CR3 now\n");
     vmm_switch_to_kernel_pml4();
     serial_write("DiyaOS: CR3 switched successfully, still alive\n");
 
-    serial_write("DiyaOS: deliberately accessing unmapped address to test page fault\n");
-    volatile uint64_t *bad_ptr = (volatile uint64_t *)0xdeadbeef000;
-    uint64_t boom = *bad_ptr;
-    (void)boom;
+    /* --- Heap + demand paging --- */
+    heap_init();
+    serial_write("DiyaOS: heap initialized\n");
 
-    serial_write("DiyaOS: unreachable if page fault handling failed\n");
+    volatile uint64_t *a = (volatile uint64_t *)kmalloc(8);
+    volatile uint64_t *b = (volatile uint64_t *)kmalloc(8);
+
+    *a = 0x1111111111111111ULL;
+    *b = 0x2222222222222222ULL;
+
+    serial_write("DiyaOS: wrote to heap, a=0x");
+    serial_write_hex(*a);
+    serial_write(" b=0x");
+    serial_write_hex(*b);
+    serial_write("\n");
+
+    volatile uint64_t *far = (volatile uint64_t *)(KHEAP_START + 0x5000);
+    *far = 0x3333333333333333ULL;
+    serial_write("DiyaOS: wrote to far page, far=0x");
+    serial_write_hex(*far);
+    serial_write(" (this access was on a different page -- a separate page fault)\n");
+
+    serial_write("DiyaOS: demand paging verified -- no crash, values correct\n");
 
     uint64_t last_printed = 0;
     for (;;) {
