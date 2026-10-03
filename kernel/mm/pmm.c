@@ -124,3 +124,8 @@ uint64_t pmm_get_free_frame_count(void)
 {
     return free_frames;
 }
+
+uint64_t pmm_get_total_frame_count(void)
+{
+    return total_frames;
+}

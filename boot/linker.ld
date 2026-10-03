@@ -43,6 +43,8 @@ SECTIONS
         *(COMMON)
     } :data
 
+    __kernel_end = .;
+    
     /DISCARD/ : {
         *(.eh_frame)
         *(.note .note.*)

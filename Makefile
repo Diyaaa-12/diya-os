@@ -16,7 +16,7 @@ KERNEL   := build/kernel.elf
 ISO      := diyaos.iso
 ISO_ROOT := build/iso_root
 
-OBJS := build/kmain.o build/serial.o build/gdt.o build/gdt_flush.o build/idt.o build/idt_flush.o build/isr.o build/isr_stubs.o build/pic.o build/timer.o build/irq.o build/irq_stubs.o build/pmm.o
+OBJS := build/kmain.o build/serial.o build/gdt.o build/gdt_flush.o build/idt.o build/idt_flush.o build/isr.o build/isr_stubs.o build/pic.o build/timer.o build/irq.o build/irq_stubs.o build/pmm.o build/vmm.o
 
 .PHONY: all iso run clean
 
@@ -38,8 +38,6 @@ build/gdt_flush.o: kernel/arch/x86_64/gdt_flush.asm
 	@mkdir -p build
 	$(AS) $(ASFLAGS) $< -o $@
 
-$(KERNEL): $(OBJS) boot/linker.ld
-	$(CC) $(LDFLAGS) $(OBJS) -o $(KERNEL)
 build/idt.o: kernel/arch/x86_64/idt.c
 	@mkdir -p build
 	$(CC) $(CFLAGS) -c $< -o $@
@@ -75,6 +73,13 @@ build/irq_stubs.o: kernel/arch/x86_64/irq_stubs.asm
 build/pmm.o: kernel/mm/pmm.c
 	@mkdir -p build
 	$(CC) $(CFLAGS) -c $< -o $@
+
+build/vmm.o: kernel/mm/vmm.c
+	@mkdir -p build
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(KERNEL): $(OBJS) boot/linker.ld
+	$(CC) $(LDFLAGS) $(OBJS) -o $(KERNEL)
 
 iso: $(KERNEL)
 	@rm -rf $(ISO_ROOT)

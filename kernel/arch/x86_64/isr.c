@@ -22,6 +22,14 @@ void isr_handler(struct interrupt_frame *frame)
     serial_write_hex(frame->error_code);
     serial_write(" rip=0x");
     serial_write_hex(frame->rip);
+
+    if (frame->vector_num == 14) {
+        uint64_t cr2;
+        __asm__ volatile ("mov %%cr2, %0" : "=r"(cr2));
+        serial_write(" faulting_addr(CR2)=0x");
+        serial_write_hex(cr2);
+    }
+
     serial_write("\n");
 
     for (;;) {

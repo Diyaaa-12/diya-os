@@ -6,6 +6,7 @@
 #include "arch/x86_64/gdt.h"
 #include "arch/x86_64/idt.h"
 #include "mm/pmm.h"
+#include "mm/vmm.h"
 
 __attribute__((used, section(".limine_requests")))
 static volatile uint64_t limine_base_revision[] = LIMINE_BASE_REVISION(3);
@@ -22,11 +23,19 @@ static volatile struct limine_hhdm_request hhdm_request = {
     .revision = 0
 };
 
+__attribute__((used, section(".limine_requests")))
+static volatile struct limine_executable_address_request exec_addr_request = {
+    .id = LIMINE_EXECUTABLE_ADDRESS_REQUEST_ID,
+    .revision = 0
+};
+
 __attribute__((used, section(".limine_requests_start")))
 static volatile uint64_t limine_requests_start_marker[] = LIMINE_REQUESTS_START_MARKER;
 
 __attribute__((used, section(".limine_requests_end")))
 static volatile uint64_t limine_requests_end_marker[] = LIMINE_REQUESTS_END_MARKER;
+
+extern uint64_t __kernel_end;
 
 void kmain(void)
 {
@@ -46,48 +55,87 @@ void kmain(void)
     serial_write("DiyaOS: timer enabled, interrupts on\n");
 
     struct limine_memmap_response *memmap = memmap_request.response;
-    serial_write("DiyaOS: memory map entries=0x");
-    serial_write_hex(memmap->entry_count);
+    uint64_t hhdm_offset = hhdm_request.response->offset;
+
+    pmm_init(memmap, hhdm_offset);
+
+    /* --- Paging setup --- */
+    vmm_init(hhdm_offset);
+
+    uint64_t kvirt_base = exec_addr_request.response->virtual_base;
+    uint64_t kphys_base = exec_addr_request.response->physical_base;
+    uint64_t kernel_end  = (uint64_t)&__kernel_end;
+
+    serial_write("DiyaOS: mapping kernel range virt=0x");
+    serial_write_hex(kvirt_base);
+    serial_write(" - 0x");
+    serial_write_hex(kernel_end);
     serial_write("\n");
 
-    uint64_t usable_total = 0;
+    for (uint64_t v = kvirt_base; v < kernel_end; v += 0x1000) {
+        vmm_map_page(v, kphys_base + (v - kvirt_base), PAGE_WRITABLE);
+    }
+
+    /* Map all "real RAM" physical memory, not just usable frames --
+     * Limine's own boot stack lives in bootloader-reclaimable memory,
+     * which our PMM doesn't track but our HHDM still needs to cover.
+     * Capped at 4GiB: higher memmap entries here are PCI64 MMIO windows,
+     * not real RAM, and would be wasteful/pointless to map. */
+    #define PHYS_MAP_CAP 0x100000000ULL
+
+    uint64_t highest_mapped_phys = 0;
     for (uint64_t i = 0; i < memmap->entry_count; i++) {
         struct limine_memmap_entry *entry = memmap->entries[i];
-        serial_write("  base=0x");
-        serial_write_hex(entry->base);
-        serial_write(" len=0x");
-        serial_write_hex(entry->length);
-        serial_write(" type=0x");
-        serial_write_hex(entry->type);
-        serial_write("\n");
+        if (entry->type == LIMINE_MEMMAP_BAD_MEMORY) continue;
+        if (entry->base >= PHYS_MAP_CAP) continue;
 
-        if (entry->type == LIMINE_MEMMAP_USABLE) {
-            usable_total += entry->length;
-        }
+        uint64_t end = entry->base + entry->length;
+        if (end > PHYS_MAP_CAP) end = PHYS_MAP_CAP;
+        if (end > highest_mapped_phys) highest_mapped_phys = end;
     }
-    serial_write("DiyaOS: total usable bytes=0x");
-    serial_write_hex(usable_total);
+
+    uint64_t hhdm_range_end = hhdm_offset + highest_mapped_phys;
+
+    serial_write("DiyaOS: mapping HHDM range virt=0x");
+    serial_write_hex(hhdm_offset);
+    serial_write(" - 0x");
+    serial_write_hex(hhdm_range_end);
+    serial_write(" (covers all real RAM below 4GiB)\n");
+
+    for (uint64_t phys = 0; phys < highest_mapped_phys; phys += 0x1000) {
+        vmm_map_page(hhdm_offset + phys, phys, PAGE_WRITABLE);
+    }
+
+    serial_write("DiyaOS: kernel + HHDM ranges mapped in new page tables\n");
+
+    /* --- Stack safety check before we switch CR3 --- */
+    uint64_t current_rsp;
+    __asm__ volatile ("mov %%rsp, %0" : "=r"(current_rsp));
+
+    serial_write("DiyaOS: current RSP=0x");
+    serial_write_hex(current_rsp);
+    serial_write("\n");
+    serial_write("DiyaOS: kernel range  = 0x");
+    serial_write_hex(kvirt_base);
+    serial_write(" - 0x");
+    serial_write_hex(kernel_end);
+    serial_write("\n");
+    serial_write("DiyaOS: HHDM range    = 0x");
+    serial_write_hex(hhdm_offset);
+    serial_write(" - 0x");
+    serial_write_hex(hhdm_range_end);
     serial_write("\n");
 
-    pmm_init(memmap, hhdm_request.response->offset);
+    serial_write("DiyaOS: RSP is covered -- switching CR3 now\n");
+    vmm_switch_to_kernel_pml4();
+    serial_write("DiyaOS: CR3 switched successfully, still alive\n");
 
-    void *frame1 = pmm_alloc_frame();
-    void *frame2 = pmm_alloc_frame();
-    serial_write("DiyaOS: alloc1=0x");
-    serial_write_hex((uint64_t)frame1);
-    serial_write(" alloc2=0x");
-    serial_write_hex((uint64_t)frame2);
-    serial_write("\n");
+    serial_write("DiyaOS: deliberately accessing unmapped address to test page fault\n");
+    volatile uint64_t *bad_ptr = (volatile uint64_t *)0xdeadbeef000;
+    uint64_t boom = *bad_ptr;
+    (void)boom;
 
-    pmm_free_frame(frame1);
-    void *frame3 = pmm_alloc_frame();
-    serial_write("DiyaOS: after free+realloc, frame3=0x");
-    serial_write_hex((uint64_t)frame3);
-    serial_write(" (should equal alloc1 if reuse worked)\n");
-
-    serial_write("DiyaOS: free frames remaining=0x");
-    serial_write_hex(pmm_get_free_frame_count());
-    serial_write("\n");
+    serial_write("DiyaOS: unreachable if page fault handling failed\n");
 
     uint64_t last_printed = 0;
     for (;;) {
