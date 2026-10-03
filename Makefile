@@ -16,7 +16,7 @@ KERNEL   := build/kernel.elf
 ISO      := diyaos.iso
 ISO_ROOT := build/iso_root
 
-OBJS := build/kmain.o build/serial.o build/gdt.o build/gdt_flush.o build/idt.o build/idt_flush.o build/isr.o build/isr_stubs.o
+OBJS := build/kmain.o build/serial.o build/gdt.o build/gdt_flush.o build/idt.o build/idt_flush.o build/isr.o build/isr_stubs.o build/pic.o build/timer.o build/irq.o build/irq_stubs.o
 
 .PHONY: all iso run clean
 
@@ -55,7 +55,23 @@ build/isr.o: kernel/arch/x86_64/isr.c
 build/isr_stubs.o: kernel/arch/x86_64/isr_stubs.asm
 	@mkdir -p build
 	$(AS) $(ASFLAGS) $< -o $@
-	
+
+build/pic.o: kernel/drivers/pic.c
+	@mkdir -p build
+	$(CC) $(CFLAGS) -c $< -o $@
+
+build/timer.o: kernel/drivers/timer.c
+	@mkdir -p build
+	$(CC) $(CFLAGS) -c $< -o $@
+
+build/irq.o: kernel/arch/x86_64/irq.c
+	@mkdir -p build
+	$(CC) $(CFLAGS) -c $< -o $@
+
+build/irq_stubs.o: kernel/arch/x86_64/irq_stubs.asm
+	@mkdir -p build
+	$(AS) $(ASFLAGS) $< -o $@
+
 iso: $(KERNEL)
 	@rm -rf $(ISO_ROOT)
 	@mkdir -p $(ISO_ROOT)/boot/limine

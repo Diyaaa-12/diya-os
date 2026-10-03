@@ -27,6 +27,7 @@ extern void idt_flush(uint64_t idtp_addr);
 /* Array of the 32 exception-stub entry addresses, defined in isr_stubs.asm.
  * We declare it here as "extern" and fill the IDT from it in a loop. */
 extern uint64_t isr_stub_table[32];
+extern uint64_t irq_stub_table[16];
 
 static void idt_set_entry(int vector, uint64_t handler_addr)
 {
@@ -39,10 +40,17 @@ static void idt_set_entry(int vector, uint64_t handler_addr)
     idt[vector].zero        = 0;
 }
 
+extern uint64_t isr_stub_table[32];
+extern uint64_t irq_stub_table[16];
+
 void idt_init(void)
 {
     for (int i = 0; i < 32; i++) {
         idt_set_entry(i, isr_stub_table[i]);
+    }
+
+    for (int i = 0; i < 16; i++) {
+        idt_set_entry(32 + i, irq_stub_table[i]);
     }
 
     idtp.limit = sizeof(idt) - 1;
