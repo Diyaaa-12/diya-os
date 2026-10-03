@@ -1,9 +1,12 @@
 CC := x86_64-elf-gcc
+AS := nasm
 
 CFLAGS := -ffreestanding -fno-stack-protector -fno-stack-check \
           -fno-pic -fno-pie -mno-red-zone -mcmodel=kernel \
           -mno-80387 -mno-mmx -mno-sse -mno-sse2 \
-          -Wall -Wextra -std=gnu11 -O2 -g
+          -Wall -Wextra -std=gnu11 -O2 -g -Ikernel
+
+ASFLAGS := -f elf64
 
 LDFLAGS := -nostdlib -static -z max-page-size=0x1000 -Wl,-T,boot/linker.ld
 
@@ -12,6 +15,8 @@ LIMINE_DIR := third_party/limine
 KERNEL   := build/kernel.elf
 ISO      := diyaos.iso
 ISO_ROOT := build/iso_root
+
+OBJS := build/kmain.o build/serial.o build/gdt.o build/gdt_flush.o
 
 .PHONY: all iso run clean
 
@@ -25,8 +30,16 @@ build/serial.o: kernel/drivers/serial.c
 	@mkdir -p build
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(KERNEL): build/kmain.o build/serial.o boot/linker.ld
-	$(CC) $(LDFLAGS) build/kmain.o build/serial.o -o $(KERNEL)
+build/gdt.o: kernel/arch/x86_64/gdt.c
+	@mkdir -p build
+	$(CC) $(CFLAGS) -c $< -o $@
+
+build/gdt_flush.o: kernel/arch/x86_64/gdt_flush.asm
+	@mkdir -p build
+	$(AS) $(ASFLAGS) $< -o $@
+
+$(KERNEL): $(OBJS) boot/linker.ld
+	$(CC) $(LDFLAGS) $(OBJS) -o $(KERNEL)
 
 iso: $(KERNEL)
 	@rm -rf $(ISO_ROOT)

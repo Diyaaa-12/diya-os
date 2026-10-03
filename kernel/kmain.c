@@ -1,6 +1,7 @@
 #include <stdint.h>
 #include "../third_party/limine/limine.h"
 #include "drivers/serial.h"
+#include "arch/x86_64/gdt.h"
 
 __attribute__((used, section(".limine_requests")))
 static volatile uint64_t limine_base_revision[] = LIMINE_BASE_REVISION(3);
@@ -15,6 +16,9 @@ void kmain(void)
 {
     serial_init();
     serial_write("DiyaOS: Milestone 1 boot OK\n");
+
+    gdt_init();
+    serial_write("DiyaOS: GDT loaded\n");
 
     for (;;) {
         __asm__ ("hlt");
