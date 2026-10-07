@@ -84,6 +84,31 @@ static void task_b_entry(void)
     }
 }
 
+__attribute__((section(".user_text")))
+static void usermode_syscall_test(void)
+{
+    char msg[] = "Hello from ring 3 via syscall!\n";
+
+    __asm__ volatile (
+        "mov $0, %%rax\n"
+        "mov %0, %%rdi\n"
+        "int $0x80\n"
+        :
+        : "r"(msg)
+        : "rax", "rdi", "memory"
+    );
+
+    __asm__ volatile (
+        "mov $1, %%rax\n"
+        "int $0x80\n"
+        :
+        :
+        : "rax"
+    );
+
+    for (;;) { }
+}
+
 /* Deliberately privileged instruction -- cli is ring-0-only. If ring 3
  * isolation is genuinely working, this MUST fault (General Protection
  * Fault, vector 13) rather than silently succeed or do nothing. */
@@ -170,8 +195,8 @@ void kmain(void)
     heap_init();
     serial_write("DiyaOS: heap initialized\n");
 
-    serial_write("DiyaOS: jumping to ring 3 -- testing privileged instruction fault\n");
-    enter_usermode((uint64_t)usermode_test_entry, (uint64_t)(user_stack + sizeof(user_stack)));
+    serial_write("DiyaOS: jumping to ring 3 -- testing syscall\n");
+    enter_usermode((uint64_t)usermode_syscall_test, (uint64_t)(user_stack + sizeof(user_stack)));
 
     serial_write("DiyaOS: unreachable if ring 3 isolation failed\n");
 
