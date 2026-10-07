@@ -29,7 +29,15 @@ static uint64_t *get_or_create_table(uint64_t *table_virt, uint64_t index)
         void *new_table_phys = pmm_alloc_frame();
         uint64_t *new_table_virt = phys_to_virt((uint64_t)new_table_phys);
         zero_table(new_table_virt);
-        table_virt[index] = (uint64_t)new_table_phys | PAGE_PRESENT | PAGE_WRITABLE;
+        table_virt[index] = (uint64_t)new_table_phys | PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER;
+    } else {
+        /* x86_64 permission checking ANDs the USER bit across EVERY level
+         * (PML4/PDPT/PD/PT) -- a user-accessible leaf page is still
+         * blocked if any intermediate table along the path lacks USER.
+         * We keep intermediate tables permissively USER-accessible always;
+         * the actual access restriction is enforced at the leaf (PT) entry,
+         * which callers control explicitly via vmm_map_page's flags. */
+        table_virt[index] |= PAGE_USER;
     }
     return phys_to_virt(table_virt[index] & PAGE_ADDR_MASK);
 }

@@ -26,6 +26,14 @@ SECTIONS
         *(.text .text.*)
     } :text
 
+    . = ALIGN(CONSTANT(MAXPAGESIZE));
+    __user_text_start = .;
+    .user_text : {
+        *(.user_text)
+    } :text
+    . = ALIGN(CONSTANT(MAXPAGESIZE));
+    __user_text_end = .;
+
     . += CONSTANT(MAXPAGESIZE);
 
     .rodata : {

@@ -10,6 +10,7 @@
 #include "mm/heap.h"
 #include "sched/task.h"
 #include "sched/scheduler.h"
+#include "arch/x86_64/tss.h"
 
 __attribute__((used, section(".limine_requests")))
 static volatile uint64_t limine_base_revision[] = LIMINE_BASE_REVISION(3);
@@ -39,7 +40,12 @@ __attribute__((used, section(".limine_requests_end")))
 static volatile uint64_t limine_requests_end_marker[] = LIMINE_REQUESTS_END_MARKER;
 
 extern uint64_t __kernel_end;
+extern uint64_t __user_text_start;
+extern uint64_t __user_text_end;
+extern void enter_usermode(uint64_t entry, uint64_t user_stack_top);
 
+static uint8_t user_stack[0x4000];
+static uint8_t tss_stack[0x4000];
 static struct task main_task;
 static struct task *task_a;
 static struct task *task_b;
@@ -78,14 +84,26 @@ static void task_b_entry(void)
     }
 }
 
+/* Deliberately privileged instruction -- cli is ring-0-only. If ring 3
+ * isolation is genuinely working, this MUST fault (General Protection
+ * Fault, vector 13) rather than silently succeed or do nothing. */
+__attribute__((section(".user_text")))
+static void usermode_test_entry(void)
+{
+    __asm__ volatile ("cli");
+
+    /* Unreachable if the fault occurred as expected. */
+    for (;;) { }
+}
 
 void kmain(void)
 {
     serial_init();
     serial_write("DiyaOS: Milestone 1 boot OK\n");
 
+    tss_init((uint64_t)(tss_stack + sizeof(tss_stack)));
     gdt_init();
-    serial_write("DiyaOS: GDT loaded\n");
+    serial_write("DiyaOS: GDT + TSS loaded\n");
 
     idt_init();
     serial_write("DiyaOS: IDT loaded\n");
@@ -126,14 +144,38 @@ void kmain(void)
 
     serial_write("DiyaOS: kernel + HHDM ranges mapped in new page tables\n");
 
+    /* Re-map just the .user_text section (and the ring-3 test stack) as
+     * USER-accessible. Everything else in the kernel stays protected --
+     * this is a deliberately narrow, scoped exception for this one test
+     * function, not a general relaxation. Real user programs (Milestone
+     * 11, ELF loading) will get their own separate address space instead
+     * of sharing the kernel's. */
+    uint64_t ut_start = (uint64_t)&__user_text_start;
+    uint64_t ut_end   = (uint64_t)&__user_text_end;
+    for (uint64_t v = ut_start; v < ut_end; v += 0x1000) {
+        vmm_map_page(v, kphys_base + (v - kvirt_base), PAGE_WRITABLE | PAGE_USER);
+    }
+
+    uint64_t us_start = (uint64_t)user_stack & ~0xFFFULL;
+    uint64_t us_end = ((uint64_t)user_stack + sizeof(user_stack) + 0xFFF) & ~0xFFFULL;
+    for (uint64_t v = us_start; v < us_end; v += 0x1000) {
+        vmm_map_page(v, kphys_base + (v - kvirt_base), PAGE_WRITABLE | PAGE_USER);
+    }
+
+    serial_write("DiyaOS: user_text + user_stack re-mapped as USER-accessible\n");
+
     vmm_switch_to_kernel_pml4();
     serial_write("DiyaOS: CR3 switched successfully, still alive\n");
 
     heap_init();
     serial_write("DiyaOS: heap initialized\n");
 
-    /* --- Context switching test --- */
-        task_set_current(&main_task);
+    serial_write("DiyaOS: jumping to ring 3 -- testing privileged instruction fault\n");
+    enter_usermode((uint64_t)usermode_test_entry, (uint64_t)(user_stack + sizeof(user_stack)));
+
+    serial_write("DiyaOS: unreachable if ring 3 isolation failed\n");
+
+    task_set_current(&main_task);
     task_a = task_create(task_a_entry);
     task_b = task_create(task_b_entry);
 
